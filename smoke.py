@@ -22,20 +22,25 @@ SPI_DEVICE2 = 1
 sensor1 = MAX31855.MAX31855(spi=SPI.SpiDev(SPI_PORT1, SPI_DEVICE1, max_speed_hz=5000000))
 sensor2 = MAX31855.MAX31855(spi=SPI.SpiDev(SPI_PORT2, SPI_DEVICE2, max_speed_hz=5000000))
 
-# relay setup
+# fan relay setup
 relayPin = 17
-
 GPIO.setup(relayPin, GPIO.OUT)
-GPIO.output(relayPin, GPIO.HIGH)
+GPIO.output(relayPin, False)
 
 # servo setup
 servoPin = 18
+freq = 50
+GPIO.setup(servoPin, GPIO.OUT)
+servo = GPIO.PWM(servoPin, freq)
+open = 12.5
+close = 2.5
+stop = 7.5
 
 #init variables
 setTemp = 250
 curTemp = 0
-firstRun = 1
-switch = 0
+firstRun = 1  #allows blynk overwrites
+switch = 3   # test var - set to 0 to run tests
 
 # Register Virtual Pins
 @blynk.handle_event('write V2')
@@ -45,6 +50,13 @@ def v2_write_handler(pin, value):
 
 def c_to_f(c):   # handy
         return c * 9.0 / 5.0 + 32.0
+
+def fanON():
+	GPIO.output(relayPin, True)
+
+def fanOFF():
+	GPIO.output(relayPin, False)
+
 
 print('Press Ctrl-C to quit.')
 try:
@@ -67,19 +79,32 @@ try:
 
     print('Air Temp: {0:0.3F}*C / {1:0.3F}*F'.format(curTemp, c_to_f(curTemp)))
     print('Meat Temp: {0:0.3F}*C / {1:0.3F}*F'.format(meatTemp, c_to_f(meatTemp)))
-
-    #test relay
-    if switch == 0:
-        switch = 1
-        GPIO.output(relayPin, GPIO.LOW)
-        print('Going Low')
-    else:
-        switch = 0
-        GPIO.output(relayPin, GPIO.HIGH)
-        print('Going High')
-
     print('Set Point: {}'.format(setTemp))
     blynk.virtual_write(1, curTemp)
+
+
+
+
+
+
+
+
+
+
+    #test relay and servo
+    if switch == 0:
+        switch = 1
+        fanOFF()
+        print('Going Low')
+	servo.start(close)
+        time.sleep(1)
+    else:
+        switch = 0
+        fanON()
+        print('Going High')
+        servo.start(open)
+        time.sleep(1)
+
     time.sleep(3.0)
 
 
@@ -87,8 +112,8 @@ except KeyboardInterrupt:
 	print('Exiting from ctrl c')
 
 
-except:
-	print('Errors')
+#except:
+#	print('Errors')
 
 finally:
 	GPIO.cleanup()
