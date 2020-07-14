@@ -1,12 +1,9 @@
-
 #!/usr/bin/env python
 
 import time
 import datetime
-import math
 import os
 import blynklib
-#import numpy as np
 
 import RPi.GPIO as GPIO
 GPIO.setmode(GPIO.BCM)
@@ -57,11 +54,9 @@ stop = 7.5
 
 #init variables
 setTemp = 250
-curTemp = 72
-meatTemp = 32
+curTemp = 0
 firstRun = 1  #allows blynk overwrites
 switch = 3   # test var - set to 0 to run tests
-temp = [250,250,250,250,250]
 
 #Prep display
 disp.begin()
@@ -76,13 +71,16 @@ padding = -2
 top = padding
 bottom = height-padding
 x = 0
-font = ImageFont.load_default()
+#font = ImageFont.load_default()
+
+
+
 
 # Register Virtual Pins
 @blynk.handle_event('write V2')
 def v2_write_handler(pin, value):
     global setTemp # update setTemp point
-    setTemp  = int(value[1])
+    setTemp  = int(value[0])
 
 
 def c_to_f(c):   # handy
@@ -94,11 +92,6 @@ def fanON():
 def fanOFF():
 	GPIO.output(relayPin, False)
 
-def moving_average(x, w):
-	return np.convolve(x, np.ones(w), 'valid') / w
-
-def average(x):
-	return sum(x)/len(x)
 
 print('Press Ctrl-C to quit.')
 
@@ -113,22 +106,15 @@ try:
     rpiTemp = sensor1.readInternalC()
     blynk.virtual_write(10, rpiTemp)   #Get rpi temp and send
 
-    tempread = c_to_f(sensor1.readTempC())
-    #temp = np.append(temp, temptemp) # Step 1: Get the current temp
-
-    if tempread == tempread: #skips nans
-        temp.append(tempread) #adds latest reading to array
-        temp = temp[:-1]     # removes oldest array value
-        curTemp = average(temp)      #computes average of last 5 readings
+    temp = sensor1.readTempC() # Step 1: Get the current temp
+    curTemp = temp # add a rolling average here !!!!!!!!!!!!!!!!
 
     time.sleep(0.1)
+    meatTemp = sensor2.readTempC()
 
-    meatread = sensor2.readTempC()
-    if meatread == meatread: meatTemp = meatRead
-
-    print "BBQ Temp: {} *F" .format(curTemp)
-    print "Meat Temp: {} *F" .format(meatTemp)
-    print "Set Point: {} *F" .format(setTemp)
+    print('BBQ Temp: {0:0.3F}*C / {1:0.3F}*F'.format(curTemp, c_to_f(curTemp)))
+    print('Meat Temp: {0:0.3F}*C / {1:0.3F}*F'.format(meatTemp, c_to_f(meatTemp)))
+    print('Set Point: {}'.format(setTemp))
     blynk.virtual_write(1, curTemp)
 
     #update pid settings
@@ -144,9 +130,9 @@ try:
     # Draw a black filled box to clear the image.
     draw.rectangle((0,0,width,height), outline=0, fill=0)
     draw.text((x, top),       timeString,  font=font, fill=255)
-    draw.text((x, top+8),     "BBQ Temp: %3.0f F" % curTemp, font=font, fill=255)
-    draw.text((x, top+16),    "Meat Temp: %3.0f F" % meatTemp, font=font, fill=255)
-    draw.text((x, top+25),    "Set Point: %3.0f F" % setTemp, font=font, fill=255)
+    draw.text((x, top+8),     "BBQ Temp:   %9.1f" % curTemp, font=font, fill=255)
+    draw.text((x, top+16),    "Meat Temp:    %9.1f" % meatTemp, font=font, fill=255)
+    draw.text((x, top+25),    "Set Point: %9.1f" % setTemp, font=font, fill=255)
 
     # Display image (box)
     disp.image(image)
