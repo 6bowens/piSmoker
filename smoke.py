@@ -7,7 +7,10 @@ import math
 import os
 import blynklib
 import subprocess
+from pyky040 import pyky040
+import threading
 import RPi.GPIO as GPIO
+
 GPIO.setmode(GPIO.BCM)
 
 import Adafruit_GPIO.SPI as SPI
@@ -21,12 +24,31 @@ from PIL import ImageFont
 RST = None
 disp = Adafruit_SSD1306.SSD1306_128_64(rst=RST)
 
+def sw_callback():
+    global setTemp
+    global knob
+    setTemp = knob
+    print ("Button Click")
+
+def rotary_callback(counter):
+    global knob
+    knob = counter
+    #print("Counter value: ", counter)  #uncomment for debug
+
+#rotary encoder
+my_encoder = pyky040.Encoder(CLK=23, DT=22, SW=27)
+my_encoder.setup(scale_min=200, scale_max=600, step=5, chg_callback=rotary_callback, sw_callback=sw_callback, sw_debounce_time=300)
+my_thread = threading.Thread(target=my_encoder.watch)
+my_thread.start() # start rotary encoder thread
+knob = 250
+
 #PID setup
 from simple_pid import PID
 pid = PID(1, 0, 0, setpoint = 250)
 pid.output_limits = (0, 1000)
 airflow = 200  #use this to control both the louver and fan
-pid.sample_time = 10 # seconds
+#pid.sample_time = 10 # seconds
+pidtime = 10
 
 #blynk setup
 from config import * # pull in blynk credentials
@@ -50,18 +72,19 @@ servoPin = 18
 freq = 50
 GPIO.setup(servoPin, GPIO.OUT)
 servo = GPIO.PWM(servoPin, freq)
-open = 12.5
-close = 2.5
-stop = 7.5
+close = 10 #12.5 is fully closed
+open = 2.5
+half = 6 # 50% closed
+angle = 0
 
 #init variables
 setTemp = 250
 curTemp = 5
 meatTemp = 5
 firstRun = 1  #allows blynk overwrites
-switch = 0   #test var - set to 0 to run tests
-temp = [250,250,250,250,250]
-meatList = [60,60,60,60,60]
+switch = 5   #test var - set to 0 to run tests
+temp = [250,250,250,250,250,250,250,250,250,250]
+meatList = [60,60,60,60,60,60,60,60,60,60]
 
 #Prep display
 disp.begin()
@@ -102,8 +125,6 @@ def fanOFF():
 def average(x):
 	return sum(x)/len(x)
 
-print('Press Ctrl-C to quit.')
-
 try:
  while True:
     blynk.run() # must be first to allow other blynk functions to work
@@ -112,42 +133,55 @@ try:
     if firstRun == 1:
         firstRun = 0
         blynk.virtual_write(2, setTemp)  #reset set smoker setpoint
+        lastTime = 0
 
-    # Get RPi Internal Chip Temp for shits
-    rpiTemp = sensor1.readInternalC()
-    blynk.virtual_write(10, rpiTemp)
+    # run this section only every pidTime windows to slow down PID internval
+    if (time.time() - lastTime) > pidtime:
 
-    # PID Step #1: Get the current temp and average over time
-    tempread = c_to_f(sensor1.readTempC())
-    if tempread == tempread:    #skips nans
-    	temp.append(tempread)   #adds latest reading to array
-    	del temp[0]        #removes oldest array value
-    	curTemp = average(temp) #computes average of last 5 readings
 
-    time.sleep(0.1) #give a sec between readings
+        # Get RPi Internal Chip Temp for shits
+        rpiTemp = sensor1.readInternalC()
+        blynk.virtual_write(10, rpiTemp)
 
-    # Grab the meat reading
-    meatread = c_to_f(sensor2.readTempC())
-    if meatread == meatread:
-        meatList.append(meatread)
-        del meatList[0]
-        meatTemp = average(meatList)
+        # PID Step #1: Get the current temp and average over time
+        tempread = (sensor1.readTempC()+8)
+        if tempread == tempread:    #skips nans
+        	temp.append(tempread)   #adds latest reading to array
+        	del temp[0]             #removes oldest array value
+        	curTemp = average(temp) #computes average of last X readings
 
-    #test prints
-    print "BBQ Temp: {} *F" .format(curTemp)
-    print "Meat Temp: {} *F" .format(meatTemp)
-    print "Set Point: {} *F" .format(setTemp)
-    blynk.virtual_write(1, curTemp)
+        time.sleep(0.1) #give a sec between readings
 
-    #update pid settings
-    pid.setpoint = setTemp #Step 2: Make sure setpoint is up to date
-    airflow = pid(curTemp) # Step 3: Compute new 'output'
-    p, i, d = pid.components #errors - print to tune
+        #print temp  # debug print
 
-    #get the time
-    now = datetime.datetime.now()
-    timeString = now.strftime("%Y-%m-%d %H:%M")
+        # Grab the meat reading
+        meatread = (sensor2.readTempC()*4)
 
+        if meatread == meatread:
+            meatList.append(meatread)
+            del meatList[0]
+            meatTemp = average(meatList)
+
+        #print meatList   # debug print
+
+        #test prints
+        print "BBQ Temp: {} *F" .format(curTemp)
+        print "Meat Temp: {} *F" .format(meatTemp)
+        print "Set Point: {} *F" .format(setTemp)
+        blynk.virtual_write(1, curTemp)
+
+        #update pid settings
+        pid.setpoint = setTemp #Step 2: Make sure setpoint is up to date
+        airflow = pid(curTemp) # Step 3: Compute new 'output'
+        p, i, d = pid.components #errors - print to tune
+
+        #get the time
+        now = datetime.datetime.now()
+        timeString = now.strftime("%Y-%m-%d %H:%M")
+
+        lastTime = time.time() #reset pid interval (leave last)
+
+    disp.clear()
     # Display data on oled
     # Draw a black filled box to clear the image.
     draw.rectangle((0,0,width,height), outline=0, fill=0)
@@ -155,31 +189,39 @@ try:
     draw.text((x, top+8),     "   IP: " + str(IP),   font=font, fill=255)
     draw.text((x, top+16),    "   RPi Temp: %3.0f C" % rpiTemp, font=font, fill=255)
 
-    draw.text((x, top+32),    "   Set Point: %3.0f F" % setTemp, font=font, fill=255)
-    draw.text((x, top+40),    "   BBQ Temp:  %3.0f F" % curTemp, font=font, fill=255)
-    draw.text((x, top+56),    "   Meat Temp: %3.0f F" % meatTemp, font=font, fill=255)
+    draw.text((x, top+32),    "   Set Point: %3.0f F" % knob, font=font, fill=255)
+
+    if (setTemp == knob):
+    	draw.text((x, top+40),    "   BBQ Temp:  %3.0f F" % curTemp, font=font, fill=255)
+    	draw.text((x, top+56),    "   Meat Temp: %3.0f F" % meatTemp, font=font, fill=255)
 
     # Display image (box)
     disp.image(image)
     disp.display()
-
 
     #test relay and servo
     if switch == 0:
         switch = 1
         fanOFF()
         print('Going Low')
-	servo.start(close)
+	servo.start(half)
         time.sleep(1)
-    elif switch ==1:
+    elif switch == 1:
         switch = 0
         fanON()
         print('Going High')
         servo.start(open)
         time.sleep(1)
 
-    time.sleep(5.0)
+    #test servo
+    if switch == 3:
+        while (angle < 13):
+            print angle
+            servo.start(angle)
+            angle += 0.5
+            time.sleep (5)
 
+    time.sleep(0.1)
 
 except KeyboardInterrupt:
 	print('Exiting from ctrl c')
