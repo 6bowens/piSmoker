@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python
 
 import time
@@ -24,12 +23,14 @@ from PIL import ImageFont
 RST = None
 disp = Adafruit_SSD1306.SSD1306_128_64(rst=RST)
 
+# Rotary click callback
 def sw_callback():
     global setTemp
     global knob
     setTemp = knob
     print ("Button Click")
 
+# Rotary turn callback
 def rotary_callback(counter):
     global knob
     knob = counter
@@ -45,10 +46,12 @@ knob = 250
 #PID setup
 from simple_pid import PID
 pid = PID(1, 0, 0, setpoint = 250)
-pid.output_limits = (0, 1000)
-airflow = 200  #use this to control both the louver and fan
-#pid.sample_time = 10 # seconds
+pid.proportional_on_measurement = True
+pid.output_limits = (0, 100)
+output = 50  #use this to control both the louver and fan
+pid.sample_time = 10 # seconds
 pidtime = 10
+runPID = 1
 
 #blynk setup
 from config import * # pull in blynk credentials
@@ -74,8 +77,7 @@ GPIO.setup(servoPin, GPIO.OUT)
 servo = GPIO.PWM(servoPin, freq)
 close = 10 #12.5 is fully closed
 open = 2.5
-half = 6 # 50% closed
-angle = 0
+angle = 6 # 6 is 50% closed
 
 #init variables
 setTemp = 250
@@ -83,8 +85,9 @@ curTemp = 5
 meatTemp = 5
 firstRun = 1  #allows blynk overwrites
 switch = 5   #test var - set to 0 to run tests
-temp = [250,250,250,250,250,250,250,250,250,250]
-meatList = [60,60,60,60,60,60,60,60,60,60]
+temp = [70] * 10
+meatList = [70] * 10
+
 
 #Prep display
 disp.begin()
@@ -110,17 +113,66 @@ IP = subprocess.check_output(cmd, shell = True )
 @blynk.handle_event('write V2')
 def v2_write_handler(pin, value):
     global setTemp # update setTemp point
-    setTemp  = int(value[1])
+    setTemp  = int(value[-1])
 
+@blynk.handle_event('write V5')
+def v5_write_handler(pin, value):
+    openVent()
+
+@blynk.handle_event('write V6')
+def v6_write_handler(pin, value):
+    closeVent()
+
+@blynk.handle_event('write V9')
+def v9_write_handler(pin, value):
+    if int(value[-1]) == 1:
+	fanON()
+    elif int(value[-1]) == 0:
+	fanOFF()
+
+@blynk.handle_event('write V11')
+def v11_write_handler(pin, value):
+    global runPID
+    runPID  = int(value[-1])
+    print runPID
+
+def closeVent():
+    global angle
+    if angle < 9.5:
+    	angle += 0.5
+    	GPIO.setup(servoPin, GPIO.OUT)
+    	servo.start(angle)
+    	time.sleep(1)
+    	GPIO.setup(servoPin, GPIO.IN)
+	print "Closing Louver"
+
+def openVent():
+    global angle
+    if angle > 2.5:
+    	angle -= 0.5
+    	GPIO.setup(servoPin, GPIO.OUT)
+    	servo.start(angle)
+    	time.sleep(1)
+    	GPIO.setup(servoPin, GPIO.IN)
+	print "Opening Louver"
+
+def moveVent(angle):
+	GPIO.setup(servoPin, GPIO.OUT)
+        servo.start(angle)
+        time.sleep(1)
+        GPIO.setup(servoPin, GPIO.IN)
+        print "Moving Louver"
 
 def c_to_f(c):   # handy
         return c * 9.0 / 5.0 + 32.0
 
 def fanON():
-	GPIO.output(relayPin, True)
+	GPIO.output(relayPin, False)
+	print "Fan On"
 
 def fanOFF():
-	GPIO.output(relayPin, False)
+	GPIO.output(relayPin, True)
+	print "Fan Off"
 
 def average(x):
 	return sum(x)/len(x)
@@ -145,6 +197,7 @@ try:
 
         # PID Step #1: Get the current temp and average over time
         tempread = (sensor1.readTempC()+8)
+
         if tempread == tempread:    #skips nans
         	temp.append(tempread)   #adds latest reading to array
         	del temp[0]             #removes oldest array value
@@ -155,29 +208,44 @@ try:
         #print temp  # debug print
 
         # Grab the meat reading
-        meatread = (sensor2.readTempC()*4)
+        meatread = (sensor2.readTempC())
 
         if meatread == meatread:
             meatList.append(meatread)
             del meatList[0]
             meatTemp = average(meatList)
 
-        #print meatList   # debug print
+        print meatList   # debug print
+
+        #update pid settings
+        pid.setpoint = setTemp #Step 2: Make sure setpoint is up to date
+        output = pid(curTemp) # Step 3: Compute new 'output'
+        p, i, d = pid.components #errors - print to tune
+
+
+	#only runPID if desired ADD CONTROL LOGIC HERE
+	if (runPID == 1):
+		print "Running PID"
+		angle = ( (1 - output/100) * 7.5) + 2.5
+		moveVent(angle)
+
+        #calculate percent open (this is here for non-PID mode
+        louver = (1 - ((angle - 2.5) / 7.5)) * 100
+
+        #get the time
+        now = datetime.datetime.now()
+        timeString = now.strftime("%Y-%m-%d %H:%M")
 
         #test prints
         print "BBQ Temp: {} *F" .format(curTemp)
         print "Meat Temp: {} *F" .format(meatTemp)
         print "Set Point: {} *F" .format(setTemp)
         blynk.virtual_write(1, curTemp)
-
-        #update pid settings
-        pid.setpoint = setTemp #Step 2: Make sure setpoint is up to date
-        airflow = pid(curTemp) # Step 3: Compute new 'output'
-        p, i, d = pid.components #errors - print to tune
-
-        #get the time
-        now = datetime.datetime.now()
-        timeString = now.strftime("%Y-%m-%d %H:%M")
+        blynk.virtual_write(2, setTemp)
+        blynk.virtual_write(3, meatTemp)
+        blynk.virtual_write(7, louver)
+        blynk.virtual_write(8, angle)
+        blynk.virtual_write(12, output)
 
         lastTime = time.time() #reset pid interval (leave last)
 
