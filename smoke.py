@@ -46,7 +46,7 @@ knob = 250
 #PID setup
 from simple_pid import PID
 pid = PID(1, 0, 0, setpoint = 250)
-pid.proportional_on_measurement = True
+#pid.proportional_on_measurement = True
 pid.output_limits = (0, 100)
 output = 50  #use this to control both the louver and fan
 pid.sample_time = 10 # seconds
@@ -134,7 +134,18 @@ def v9_write_handler(pin, value):
 def v11_write_handler(pin, value):
     global runPID
     runPID  = int(value[-1])
-    print runPID
+
+@blynk.handle_event('write V13')
+def v13_write_handler(pin, value):
+    global angle
+    angle = open
+    moveVent(angle)
+
+@blynk.handle_event('write V14')
+def v14_write_handler(pin, value):
+    global angle
+    angle = close
+    moveVent(angle)
 
 def closeVent():
     global angle
@@ -196,7 +207,7 @@ try:
         blynk.virtual_write(10, rpiTemp)
 
         # PID Step #1: Get the current temp and average over time
-        tempread = (sensor1.readTempC()+8)
+        tempread =c_to_f(sensor2.readTempC())
 
         if tempread == tempread:    #skips nans
         	temp.append(tempread)   #adds latest reading to array
@@ -208,14 +219,14 @@ try:
         #print temp  # debug print
 
         # Grab the meat reading
-        meatread = (sensor2.readTempC())
+        meatread =c_to_f(sensor1.readTempC())
 
         if meatread == meatread:
             meatList.append(meatread)
             del meatList[0]
             meatTemp = average(meatList)
 
-        print meatList   # debug print
+        #print meatList   # debug print
 
         #update pid settings
         pid.setpoint = setTemp #Step 2: Make sure setpoint is up to date
